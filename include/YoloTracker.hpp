@@ -2,7 +2,7 @@
 #define YOLO_TRACKER_HPP
 
 #include <opencv2/imgproc.hpp>
-//#include <opencv2/geometry.hpp>
+#include <opencv2/geometry.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/dnn.hpp>
 #include <vector>
@@ -29,4 +29,4 @@ public:
     cv::Rect processFrame(const cv::Mat& frame, cv::Mat& out_mask);
 };
 
-#endif // YOLO_TRACKER_HPP
+#endif

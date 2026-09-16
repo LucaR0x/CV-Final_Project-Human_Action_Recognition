@@ -5,8 +5,7 @@ AUTHOR: CORTESE ALESSANDRO
 #include "Classifier.hpp"
 #include <iostream>
 #include <iomanip>
-#include <random>
-#include <algorithm>
+#include <cstdlib>
 #include <cmath>
 
 ActionClassifier::ActionClassifier() {
@@ -34,22 +33,26 @@ void ActionClassifier::prepareMatrices(const std::vector<FeatureSample>& samples
 void ActionClassifier::computeScalingParams(const cv::Mat& data) {
     int cols = data.cols;
     int rows = data.rows;
-    trained_means.assign(cols, 0.0f);
-    trained_stds.assign(cols, 0.0f);
+    trained_means.resize(cols);
+    trained_stds.resize(cols);
+    for (int j = 0; j < cols; ++j) {
+        trained_means[j] = 0.0f;
+        trained_stds[j] = 0.0f;
+    }
 
     for (int j = 0; j < cols; ++j) {
         float sum_val = 0.0f;
         for (int i = 0; i < rows; ++i) {
             sum_val += data.at<float>(i, j);
         }
-        trained_means[j] = sum_val / rows;
+        trained_means[j] = sum_val / (float)rows;
 
         float sq_diff = 0.0f;
         for (int i = 0; i < rows; ++i) {
             float d = data.at<float>(i, j) - trained_means[j];
             sq_diff += d * d;
         }
-        trained_stds[j] = std::sqrt(sq_diff / rows) + 1e-6f;
+        trained_stds[j] = std::sqrt(sq_diff / (float)rows) + 1e-6f;
     }
 }
 
@@ -72,20 +75,32 @@ float ActionClassifier::evaluate(const std::vector<FeatureSample>& dataset, floa
         }
     }
 
-    std::mt19937 rng(42);
+    std::srand(42);
     for (int c = 0; c < 6; ++c) {
-        std::shuffle(class_buckets[c].begin(), class_buckets[c].end(), rng);
+        int n = (int)class_buckets[c].size();
+        for (int i = n - 1; i > 0; --i) {
+            int j = std::rand() % (i + 1);
+            FeatureSample temp = class_buckets[c][i];
+            class_buckets[c][i] = class_buckets[c][j];
+            class_buckets[c][j] = temp;
+        }
     }
 
     const int K_FOLDS = 6;
-    int confusion_matrix[6][6] = {0};
+    int confusion_matrix[6][6];
+    for (int r = 0; r < 6; ++r) {
+        for (int c = 0; c < 6; ++c) {
+            confusion_matrix[r][c] = 0;
+        }
+    }
     int total_eval = 0;
     int total_correct = 0;
 
     const std::string class_names[6] = {"Boxing", "Clapping", "Waving", "Jogging", "Running", "Walking"};
 
     for (int fold = 0; fold < K_FOLDS; ++fold) {
-        std::vector<FeatureSample> train_fold, test_fold;
+        std::vector<FeatureSample> train_fold;
+        std::vector<FeatureSample> test_fold;
 
         for (int c = 0; c < 6; ++c) {
             int fold_size = (int)class_buckets[c].size() / K_FOLDS;
@@ -93,8 +108,11 @@ float ActionClassifier::evaluate(const std::vector<FeatureSample>& dataset, floa
             int end_idx = start_idx + fold_size;
 
             for (int i = 0; i < (int)class_buckets[c].size(); ++i) {
-                if (i >= start_idx && i < end_idx) test_fold.push_back(class_buckets[c][i]);
-                else train_fold.push_back(class_buckets[c][i]);
+                if (i >= start_idx && i < end_idx) {
+                    test_fold.push_back(class_buckets[c][i]);
+                } else {
+                    train_fold.push_back(class_buckets[c][i]);
+                }
             }
         }
 
@@ -130,10 +148,10 @@ float ActionClassifier::evaluate(const std::vector<FeatureSample>& dataset, floa
                 if (pred_label == gt_label) {
                     total_correct++;
                 } else {
-                    std::cout << "[MISCLASS] Fold " << fold << " | Seq: " 
-                              << test_fold[i].sequence_name << " (GT: " << gt_label 
-                              << " " << class_names[gt_label - 1] << " -> Pred: " << pred_label 
-                              << " " << class_names[pred_label - 1] << ")\n";
+                    std::cout << "   Fold " << fold << " misclass: " 
+                              << test_fold[i].sequence_name << " (expected " 
+                              << class_names[gt_label - 1] << ", got " 
+                              << class_names[pred_label - 1] << ")\n";
                 }
                 total_eval++;
             }
@@ -141,24 +159,25 @@ float ActionClassifier::evaluate(const std::vector<FeatureSample>& dataset, floa
     }
 
     float accuracy = ((float)total_correct / (float)total_eval) * 100.0f;
-    std::cout << "\n================ 6-FOLD CV EVALUATION METRICS ================\n";
-    std::cout << "Total Evaluated Sequences: " << total_eval << " / 72\n";
-    std::cout << "Mean Cross-Validation Accuracy: " << std::fixed << std::setprecision(2) << accuracy << "%\n\n";
+    std::cout << "\n--- 6-Fold Cross-Validation ---\n";
+    std::cout << "Evaluated sequences: " << total_eval << " / " << dataset.size() << "\n";
+    std::cout << "Overall CV Accuracy: " << std::fixed << std::setprecision(2) << accuracy << "%\n\n";
 
-    std::cout << "Cumulative Confusion Matrix:\n";
+    std::cout << "Confusion Matrix:\n";
     std::cout << "      [1]  [2]  [3]  [4]  [5]  [6]\n";
     for (int r = 0; r < 6; ++r) {
-        std::cout << "[" << (r + 1) << "]  ";
+        std::cout << " [" << (r + 1) << "] ";
         for (int c = 0; c < 6; ++c) {
             std::cout << std::setw(4) << confusion_matrix[r][c] << " ";
         }
         std::cout << "\n";
     }
 
-    std::cout << "\nPer-Class Cumulative Metrics:\n";
+    std::cout << "\nPer-class metrics:\n";
     for (int c = 0; c < 6; ++c) {
         int tp = confusion_matrix[c][c];
-        int fn = 0, fp = 0;
+        int fn = 0;
+        int fp = 0;
 
         for (int i = 0; i < 6; ++i) {
             if (i != c) {
@@ -167,16 +186,16 @@ float ActionClassifier::evaluate(const std::vector<FeatureSample>& dataset, floa
             }
         }
 
-        float prec = (tp + fp > 0) ? (float)tp / (tp + fp) : 0.0f;
-        float rec  = (tp + fn > 0) ? (float)tp / (tp + fn) : 0.0f;
-        float f1   = (prec + rec > 0) ? 2.0f * (prec * rec) / (prec + rec) : 0.0f;
+        float prec = (tp + fp > 0) ? ((float)tp / (float)(tp + fp)) : 0.0f;
+        float rec = (tp + fn > 0) ? ((float)tp / (float)(tp + fn)) : 0.0f;
+        float f1 = (prec + rec > 0.0f) ? (2.0f * (prec * rec) / (prec + rec)) : 0.0f;
 
-        std::cout << "Class " << (c + 1) << " (" << std::setw(9) << class_names[c] << ") -> "
-                  << "Prec: " << std::setprecision(2) << prec << " | "
-                  << "Rec: " << rec << " | "
-                  << "F1: " << f1 << "\n";
+        std::cout << "  - " << std::left << std::setw(10) << class_names[c]
+                  << " | Prec: " << std::fixed << std::setprecision(2) << prec
+                  << " | Rec: " << rec
+                  << " | F1: " << f1 << "\n";
     }
-    std::cout << "==============================================================\n\n";
+    std::cout << std::string(45, '-') << "\n\n";
     return accuracy;
 }
 
@@ -206,12 +225,12 @@ void ActionClassifier::trainAndSave(const std::vector<FeatureSample>& dataset, c
     fs << "stds" << trained_stds;
     fs.release();
 
-    std::cout << "Final SVM Model and Scaling Params saved to: " << model_output_path << std::endl;
+    std::cout << "Saved SVM model and scaler: " << model_output_path << "\n";
 }
 
 int ActionClassifier::predict(const std::vector<float>& raw_feature_vector) const {
     if (trained_means.empty() || trained_stds.empty()) {
-        std::cerr << "Scaler params not initialized!" << std::endl;
+        std::cerr << "Error: Scaler parameters not initialized\n";
         return -1;
     }
 
@@ -229,7 +248,7 @@ bool ActionClassifier::loadModel(const std::string& model_input_path) {
     std::string scale_path = model_input_path + ".scale.yaml";
     cv::FileStorage fs(scale_path, cv::FileStorage::READ);
     if (!fs.isOpened()) {
-        std::cerr << "Scaling file missing: " << scale_path << std::endl;
+        std::cerr << "Warning: Scaling file missing: " << scale_path << "\n";
         return !svm_model.empty();
     }
 

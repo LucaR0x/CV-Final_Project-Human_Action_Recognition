@@ -13,17 +13,27 @@ AUTHOR: ROSSETTO LUCA
 #include <filesystem>
 #include <vector>
 #include <iomanip>
-#include <algorithm>
-#include <memory>
+#include <string>
 
 namespace fs = std::filesystem;
 
 // Helper function to calculate Intersection over Union (IoU) between two cv::Rect
 static float computeIoU(const cv::Rect& a, const cv::Rect& b) {
-    cv::Rect inter = a & b;
-    if (inter.width <= 0 || inter.height <= 0) return 0.0f;
-    float inter_area = static_cast<float>(inter.area());
-    float union_area = static_cast<float>(a.area() + b.area() - inter.area());
+    int x1 = (a.x > b.x) ? a.x : b.x;
+    int y1 = (a.y > b.y) ? a.y : b.y;
+    int x2 = (a.x + a.width < b.x + b.width) ? (a.x + a.width) : (b.x + b.width);
+    int y2 = (a.y + a.height < b.y + b.height) ? (a.y + a.height) : (b.y + b.height);
+
+    int w = x2 - x1;
+    int h = y2 - y1;
+
+    if (w <= 0 || h <= 0) return 0.0f;
+
+    float inter_area = (float)(w * h);
+    float area_a = (float)(a.width * a.height);
+    float area_b = (float)(b.width * b.height);
+    float union_area = area_a + area_b - inter_area;
+
     if (union_area <= 0.0f) return 0.0f;
     return inter_area / union_area;
 }
@@ -40,34 +50,30 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
                                   bool is_yolo_mode,
                                   const std::string& output_dir) {
     PipelineResults results;
-    results.mode_name = is_yolo_mode ? "DEEP LEARNING" : "CLASSICAL COMPUTER VISION";
+    results.mode_name = is_yolo_mode ? "YOLOv8 Pose" : "Classical CV";
 
     if (!fs::exists(output_dir)) {
         fs::create_directories(output_dir);
     }
 
-    // Creazione della sottocartella dedicata ai video per questo metodo
     std::string videos_dir = output_dir + "/videos";
     if (!fs::exists(videos_dir)) {
         fs::create_directories(videos_dir);
     }
 
-    std::cout << "\n===================================================================\n";
-    std::cout << " PIPELINE: " << results.mode_name << "\n";
-    std::cout << "===================================================================\n";
-
-    std::cout << "\n================ LOCALIZATION & TRACKING ================\n";
+    std::cout << "\nPipeline: " << results.mode_name << "\n";
+    std::cout << std::string(45, '-') << "\n";
     
-    std::unique_ptr<YoloTracker> yolo_tracker = nullptr;
+    YoloTracker* yolo_tracker = nullptr;
     if (is_yolo_mode) {
-        std::cout << "Mode: DEEP LEARNING FALLBACK (YOLOv8 Pose)\n";
+        std::cout << "Tracker: YOLOv8 Pose (ONNX inference)\n";
         std::string model_path = "../models/yolov8n-pose.onnx";
-        yolo_tracker = std::make_unique<YoloTracker>(model_path);
+        yolo_tracker = new YoloTracker(model_path);
     } else {
-        std::cout << "Mode: CLASSICAL COMPUTER VISION (KNN Subtractor + Morph)\n";
+        std::cout << "Tracker: Classical CV (KNN Subtractor + Morph)\n";
     }
 
-    std::cout << "Processing " << raw_dataset.size() << " sequences...\n";
+    std::cout << "Processing " << raw_dataset.size() << " video sequence\n";
 
     std::vector<FeatureSample> feature_dataset;
     std::vector<float> iou_scores;
@@ -80,20 +86,19 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
     const std::string class_names_arr[6] = {"Boxing", "Clapping", "Waving", "Jogging", "Running", "Walking"};
 
     for (size_t s = 0; s < raw_dataset.size(); ++s) {
-        const auto& seq = raw_dataset[s];
+        const SequenceData& seq = raw_dataset[s];
         cv::Rect pred_median_bbox(0, 0, 0, 0);
         std::vector<cv::Rect> sequence_tracked_boxes;
         
-        std::unique_ptr<Tracker> std_tracker = nullptr;
+        Tracker* std_tracker = nullptr;
 
         if (is_yolo_mode) {
             yolo_tracker->reset();
         } else {
-            std_tracker = std::make_unique<Tracker>();
+            std_tracker = new Tracker();
             std_tracker->init(seq.frames);
         }
 
-        // Vettore temporaneo per memorizzare i frame annotati di questa sequenza
         std::vector<cv::Mat> annotated_frames;
 
         for (size_t f = 0; f < seq.frames.size(); ++f) {
@@ -108,11 +113,10 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
 
             sequence_tracked_boxes.push_back(bbox);
 
-            if (static_cast<int>(f) == MEDIAN_FRAME_IDX) {
+            if ((int)f == MEDIAN_FRAME_IDX) {
                 pred_median_bbox = bbox;
             }
 
-            // Preparazione del frame con la BBox disegnata in VERDE per il video
             cv::Mat frame_viz;
             if (seq.frames[f].channels() == 1) {
                 cv::cvtColor(seq.frames[f], frame_viz, cv::COLOR_GRAY2BGR);
@@ -122,11 +126,19 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
 
             cv::rectangle(frame_viz, bbox, cv::Scalar(0, 255, 0), 2);
             
-            std::string act_name = (seq.class_label >= 1 && seq.class_label <= 6) ? class_names_arr[seq.class_label - 1] : "";
+            std::string act_name = "";
+            if (seq.class_label >= 1 && seq.class_label <= 6) {
+                act_name = class_names_arr[seq.class_label - 1];
+            }
             std::string info_text = act_name + " | F:" + std::to_string(f);
             cv::putText(frame_viz, info_text, cv::Point(5, 12), cv::FONT_HERSHEY_SIMPLEX, 0.35, cv::Scalar(0, 255, 255), 1);
 
             annotated_frames.push_back(frame_viz);
+        }
+
+        if (std_tracker != nullptr) {
+            delete std_tracker;
+            std_tracker = nullptr;
         }
 
         if (pred_median_bbox.width <= 0 || pred_median_bbox.height <= 0) {
@@ -135,17 +147,15 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
 
         pred_bboxes.push_back(pred_median_bbox);
 
-        // Salvataggio del video della sequenza corrente (es. 10 FPS per vederla fluida)
         if (!annotated_frames.empty()) {
             int frame_w = annotated_frames[0].cols;
             int frame_h = annotated_frames[0].rows;
             std::string video_path = videos_dir + "/" + seq.sequence_name + ".mp4";
             
-            // Usiamo il codec mp4v (compatibile universalmente con i contenitori .mp4)
             cv::VideoWriter writer(video_path, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 10.0, cv::Size(frame_w, frame_h), true);
             if (writer.isOpened()) {
-                for (const auto& fr : annotated_frames) {
-                    writer.write(fr);
+                for (size_t i = 0; i < annotated_frames.size(); ++i) {
+                    writer.write(annotated_frames[i]);
                 }
                 writer.release();
             }
@@ -169,6 +179,11 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
         feature_dataset.push_back(sample);
     }
 
+    if (yolo_tracker != nullptr) {
+        delete yolo_tracker;
+        yolo_tracker = nullptr;
+    }
+
     // Compute Mean IoU (mIoU) per class and overall
     float sum_iou = 0.0f;
     std::vector<float> class_iou_sums(6, 0.0f);
@@ -182,35 +197,37 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
         }
         sum_iou += iou_scores[i];
     }
-    results.mIoU = (iou_scores.empty()) ? 0.0f : (sum_iou / iou_scores.size());
-
+    
+    results.mIoU = iou_scores.empty() ? 0.0f : (sum_iou / (float)iou_scores.size());
     results.per_class_miou.resize(6, 0.0f);
-    std::cout << "Mean Intersection over Union (mIoU): " << std::fixed << std::setprecision(4) << results.mIoU << "\n";
-    std::cout << "Per-class mIoU breakdown:\n";
-    for (int c = 0; c < 6; ++c) {
-        float c_miou = (class_iou_counts[c] > 0) ? (class_iou_sums[c] / class_iou_counts[c]) : 0.0f;
-        results.per_class_miou[c] = c_miou;
-        std::cout << "  - " << std::setw(10) << class_names_arr[c] << ": " << std::setprecision(4) << c_miou << "\n";
-    }
-    std::cout << "===================================================================\n\n";
 
-    std::cout << "================ CLASSIFICATION & EVALUATION ================\n";
+    std::cout << "Tracking mIoU: " << std::fixed << std::setprecision(4) << results.mIoU << "\n";
+    std::cout << "    Breakdown per class:\n";
+    for (int c = 0; c < 6; ++c) {
+        float c_miou = 0.0f;
+        if (class_iou_counts[c] > 0) {
+            c_miou = class_iou_sums[c] / (float)class_iou_counts[c];
+        }
+        results.per_class_miou[c] = c_miou;
+        std::cout << "    - " << std::left << std::setw(10) << class_names_arr[c] << ": " << std::setprecision(4) << c_miou << "\n";
+    }
+
+    std::cout << "\nTraining & cross-validation (SVM)...\n";
     ActionClassifier classifier;
     results.cv_accuracy = classifier.evaluate(feature_dataset, 0.75f);
 
     std::string model_path = output_dir + "/svm_action_model.xml";
-    std::cout << "Training final SVM model on complete dataset..." << std::endl;
     classifier.trainAndSave(feature_dataset, model_path);
+    std::cout << "Saved model: " << model_path << "\n";
 
-    // Save bounding box visual outputs for all 72 sequences (immagini singole sul frame mediano)
+    // Save bounding box visual outputs for all sequences (immagini singole sul frame mediano)
     std::string viz_dir = output_dir + "/visualizations";
     if (!fs::exists(viz_dir)) {
         fs::create_directories(viz_dir);
     }
 
-    std::cout << "\nSaving bounding box visualization images to: " << viz_dir << std::endl;
     for (size_t s = 0; s < raw_dataset.size(); ++s) {
-        const auto& seq = raw_dataset[s];
+        const SequenceData& seq = raw_dataset[s];
         int pred_class = classifier.predict(feature_dataset[s].descriptors);
         int gt_class = seq.class_label;
 
@@ -221,10 +238,8 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
             viz_img = seq.frames[MEDIAN_FRAME_IDX].clone();
         }
 
-        // Draw Ground Truth bounding box in BLUE
+        // Draw Ground Truth (blue) and Predicted (green)
         cv::rectangle(viz_img, seq.median_bbox, cv::Scalar(255, 0, 0), 2);
-
-        // Draw Predicted bounding box from Member 1 Tracker in GREEN
         cv::rectangle(viz_img, pred_bboxes[s], cv::Scalar(0, 255, 0), 2);
 
         std::string gt_str = (gt_class >= 1 && gt_class <= 6) ? class_names_arr[gt_class - 1] : "Unknown";
@@ -236,8 +251,7 @@ static PipelineResults runPipeline(const std::vector<SequenceData>& raw_dataset,
         std::string out_path = viz_dir + "/" + seq.sequence_name + ".png";
         cv::imwrite(out_path, viz_img);
     }
-    std::cout << "Saved 72 visualization images into " << viz_dir << std::endl;
-    std::cout << "=======================================================================\n";
+    std::cout << "Saved " << raw_dataset.size() << " preview frames in " << viz_dir << "/\n";
 
     return results;
 }
@@ -248,71 +262,61 @@ int main(int argc, char** argv) {
     bool use_yolo = false;
     bool use_all = false;
 
-    // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--use-yolo") {
             use_yolo = true;
         } else if (arg == "--use-all") {
             use_all = true;
-        } else if (arg.rfind("--", 0) != 0) { // If it doesn't start with "--", assume dataset path
+        } else if (arg.rfind("--", 0) != 0) {
             dataset_path = arg;
         }
     }
 
-    std::cout << "Loading dataset from: " << dataset_path << std::endl;
+    std::cout << "Loading dataset: " << dataset_path << "\n";
     std::vector<SequenceData> raw_dataset = DatasetLoader::loadDataset(dataset_path);
 
     if (raw_dataset.empty()) {
-        std::cerr << "[ERROR] No valid action sequences found in " << dataset_path << ". Exiting." << std::endl;
+        std::cerr << "Error: No valid sequences found in " << dataset_path << "\n";
         return -1;
     }
+    std::cout << "Loaded " << raw_dataset.size() << " sequence.\n";
 
     if (use_all) {
-        // Run both Classical CV and Deep Learning YOLO pipelines and compare them
-        std::cout << "\n=======================================================================\n";
-        std::cout << "               RUNNING COMPLETE COMPARISON                 \n";
-        std::cout << "=======================================================================\n";
-
-        // Cartelle rigorosamente separate
         PipelineResults cv_res = runPipeline(raw_dataset, false, base_output_dir + "/cv");
         PipelineResults yolo_res = runPipeline(raw_dataset, true, base_output_dir + "/yolo");
 
         const std::string class_names_arr[6] = {"Boxing", "Clapping", "Waving", "Jogging", "Running", "Walking"};
 
-        std::cout << "\n\n";
-        std::cout << "================================================================================\n";
-        std::cout << "                      FINAL COMPARISON & EVALUATION SUMMARY                      \n";
-        std::cout << "================================================================================\n";
-        std::cout << std::left << std::setw(30) << " Metric / Class"
-                  << std::setw(25) << " Classical Computer Vision"
-                  << std::setw(25) << " Deep Learning (YOLOv8 Pose)"
+        std::cout << "\n\n--- Comparison Summary ---\n";
+        std::cout << std::left << std::setw(20) << "Metric / Class"
+                  << std::setw(20) << "Classical CV"
+                  << std::setw(20) << "YOLOv8 Pose"
                   << "\n";
-        std::cout << std::string(80, '-') << "\n";
+        std::cout << std::string(58, '-') << "\n";
 
-        std::cout << std::left << std::setw(30) << " Mean IoU (mIoU)"
-                  << std::setw(25) << (std::to_string(cv_res.mIoU).substr(0, 6))
-                  << std::setw(25) << (std::to_string(yolo_res.mIoU).substr(0, 6))
+        std::cout << std::left << std::setw(20) << "Mean IoU"
+                  << std::setw(20) << (std::to_string(cv_res.mIoU).substr(0, 6))
+                  << std::setw(20) << (std::to_string(yolo_res.mIoU).substr(0, 6))
                   << "\n";
 
-        std::cout << std::left << std::setw(30) << " 6-Fold CV Accuracy"
-                  << std::setw(25) << (std::to_string(cv_res.cv_accuracy).substr(0, 5) + "%")
-                  << std::setw(25) << (std::to_string(yolo_res.cv_accuracy).substr(0, 5) + "%")
+        std::cout << std::left << std::setw(20) << "Accuracy"
+                  << std::setw(20) << (std::to_string(cv_res.cv_accuracy).substr(0, 5) + "%")
+                  << std::setw(20) << (std::to_string(yolo_res.cv_accuracy).substr(0, 5) + "%")
                   << "\n";
 
-        std::cout << std::string(80, '-') << "\n";
-        std::cout << " Per-Class mIoU Breakdown:\n";
+        std::cout << std::string(58, '-') << "\n";
+        std::cout << "Class IoU:\n";
         for (int c = 0; c < 6; ++c) {
-            std::cout << "   - " << std::left << std::setw(25) << class_names_arr[c]
-                      << std::setw(25) << (std::to_string(cv_res.per_class_miou[c]).substr(0, 6))
-                      << std::setw(25) << (std::to_string(yolo_res.per_class_miou[c]).substr(0, 6))
+            std::cout << "  " << std::left << std::setw(18) << class_names_arr[c]
+                      << std::setw(20) << (std::to_string(cv_res.per_class_miou[c]).substr(0, 6))
+                      << std::setw(20) << (std::to_string(yolo_res.per_class_miou[c]).substr(0, 6))
                       << "\n";
         }
-        std::cout << "================================================================================\n\n";
+        std::cout << std::string(58, '-') << "\n\n";
 
     } else {
-        // Assegna automaticamente la sottocartella corretta in base al flag scelto
-        std::string specific_output_dir = use_yolo ? (base_output_dir + "/yolo") : (base_output_dir + "/cv");
+        std::string specific_output_dir = base_output_dir + (use_yolo ? "/yolo" : "/cv");
         runPipeline(raw_dataset, use_yolo, specific_output_dir);
     }
 

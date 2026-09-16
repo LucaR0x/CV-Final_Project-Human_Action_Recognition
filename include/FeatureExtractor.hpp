@@ -18,11 +18,11 @@ class FeatureExtractor {
 public:
     FeatureExtractor();
 
-    // Extract feature vector from video sequence using classical background subtractor tracking
+    // Extract feature vector from video sequence using background subtractor tracking
     FeatureSample extractFromSequence(const std::vector<cv::Mat>& frames, 
                                        int label, 
                                        const std::string& sequence_name,
                                        const cv::Rect& ground_truth_roi);
 };
 
-#endif // FEATURE_EXTRACTOR_HPP
+#endif

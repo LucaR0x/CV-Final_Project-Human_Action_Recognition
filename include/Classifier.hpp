@@ -7,7 +7,6 @@
 #include <string>
 #include "FeatureExtractor.hpp"
 
-// Member 2: Action Classifier using SVM and 6-Fold Cross Validation
 class ActionClassifier {
 private:
     cv::Ptr<cv::ml::SVM> svm_model;
@@ -24,7 +23,7 @@ public:
     // 6-Fold Stratified Cross Validation Evaluation (returns mean CV accuracy percentage)
     float evaluate(const std::vector<FeatureSample>& dataset, float train_ratio = 0.75f);
 
-    // Train final model and save to xml file
+    // Train final model and save
     void trainAndSave(const std::vector<FeatureSample>& dataset, const std::string& model_output_path);
 
     // Predict action label for a single sequence descriptor vector
@@ -34,4 +33,4 @@ public:
     bool loadModel(const std::string& model_input_path);
 };
 
-#endif // CLASSIFIER_HPP
+#endif

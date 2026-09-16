@@ -5,10 +5,8 @@ AUTHOR: ROSSETTO LUCA
 #include "tracker.hpp"
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
-//#include <opencv2/geometry.hpp>
+#include <opencv2/geometry.hpp>
 #include <opencv2/video.hpp>
-#include <numeric>
-#include <algorithm>
 #include <cmath>
 
 Tracker::Tracker() {
@@ -39,7 +37,19 @@ void Tracker::init(const std::vector<cv::Mat>& sequence_frames) {
                 }
                 pixel_values[i] = gray_f.at<uchar>(r, c);
             }
-            std::nth_element(pixel_values.begin(), pixel_values.begin() + num_frames / 2, pixel_values.end());
+            
+            for (int i = 0; i < num_frames - 1; ++i) {
+                int min_idx = i;
+                for (int j = i + 1; j < num_frames; ++j) {
+                    if (pixel_values[j] < pixel_values[min_idx]) {
+                        min_idx = j;
+                    }
+                }
+                uchar temp = pixel_values[i];
+                pixel_values[i] = pixel_values[min_idx];
+                pixel_values[min_idx] = temp;
+            }
+            
             bg_median.at<uchar>(r, c) = pixel_values[num_frames / 2];
         }
     }
@@ -71,7 +81,12 @@ cv::Rect Tracker::processFrame(const cv::Mat& frame, cv::Mat& out_mask) {
         }
     } else {
         cv::Mat fg_knn;
-        double lr = first_frame ? 0.5 : 0.0002;
+        double lr;
+        if (first_frame) {
+            lr = 0.5;
+        } else {
+            lr = 0.0002;
+        }
         bg_subtractor->apply(gray_img, fg_knn, lr);
         cv::threshold(fg_knn, fg_mask, 150, 255, cv::THRESH_BINARY);
     }
@@ -82,7 +97,8 @@ cv::Rect Tracker::processFrame(const cv::Mat& frame, cv::Mat& out_mask) {
     // Vertical morphological closing kernel to join body parts
     cv::Mat close_kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(11, 25));
     cv::morphologyEx(fg_mask, out_mask, cv::MORPH_CLOSE, close_kernel);
-    cv::dilate(out_mask, out_mask, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 9)));
+    cv::Mat dilate_kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 9));
+    cv::dilate(out_mask, out_mask, dilate_kernel);
 
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(out_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -93,7 +109,9 @@ cv::Rect Tracker::processFrame(const cv::Mat& frame, cv::Mat& out_mask) {
     for (size_t i = 0; i < contours.size(); ++i) {
         double area = cv::contourArea(contours[i]);
         cv::Rect b = cv::boundingRect(contours[i]);
-        if (b.width > img_w * 0.85 || b.height > img_h * 0.85) continue;
+        if (b.width > img_w * 0.85 || b.height > img_h * 0.85) {
+            continue;
+        }
 
         if (area > max_area) {
             max_area = area;
@@ -105,15 +123,35 @@ cv::Rect Tracker::processFrame(const cv::Mat& frame, cv::Mat& out_mask) {
     if (final_box.area() > 0) {
         for (size_t i = 0; i < contours.size(); ++i) {
             double area = cv::contourArea(contours[i]);
-            if (area < 25.0) continue;
+            if (area < 25.0) {
+                continue;
+            }
             cv::Rect b = cv::boundingRect(contours[i]);
-            if (b == main_box) continue;
-            if (b.width > img_w * 0.85 || b.height > img_h * 0.85) continue;
+            if (b.x == main_box.x && b.y == main_box.y && b.width == main_box.width && b.height == main_box.height) {
+                continue;
+            }
+            if (b.width > img_w * 0.85 || b.height > img_h * 0.85) {
+                continue;
+            }
 
-            int dx = std::max(0, std::max(main_box.x - (b.x + b.width), b.x - (main_box.x + main_box.width)));
-            int dy = std::max(0, std::max(main_box.y - (b.y + b.height), b.y - (main_box.y + main_box.height)));
+            int diff_x1 = main_box.x - (b.x + b.width);
+            int diff_x2 = b.x - (main_box.x + main_box.width);
+            int dx = 0;
+            if (diff_x1 > dx) dx = diff_x1;
+            if (diff_x2 > dx) dx = diff_x2;
+
+            int diff_y1 = main_box.y - (b.y + b.height);
+            int diff_y2 = b.y - (main_box.y + main_box.height);
+            int dy = 0;
+            if (diff_y1 > dy) dy = diff_y1;
+            if (diff_y2 > dy) dy = diff_y2;
+
             if (dx < 20 && dy < 20) {
-                final_box |= b;
+                int x1 = (final_box.x < b.x) ? final_box.x : b.x;
+                int y1 = (final_box.y < b.y) ? final_box.y : b.y;
+                int x2 = (final_box.x + final_box.width > b.x + b.width) ? final_box.x + final_box.width : b.x + b.width;
+                int y2 = (final_box.y + final_box.height > b.y + b.height) ? final_box.y + final_box.height : b.y + b.height;
+                final_box = cv::Rect(x1, y1, x2 - x1, y2 - y1);
             }
         }
     }
@@ -123,11 +161,24 @@ cv::Rect Tracker::processFrame(const cv::Mat& frame, cv::Mat& out_mask) {
         float aspect_ratio = (float)final_box.height / ((float)final_box.width + 1e-4f);
         if (aspect_ratio < 1.4f) {
             int target_h = (int)(final_box.width * 2.0f);
-            target_h = std::min(target_h, (int)(img_h * 0.65f));
+            int max_allowed_h = (int)(img_h * 0.65f);
+            if (target_h > max_allowed_h) {
+                target_h = max_allowed_h;
+            }
+
             if (target_h > final_box.height) {
                 int pad_y = (target_h - final_box.height) / 2;
-                final_box.y = std::max(0, final_box.y - pad_y);
-                final_box.height = std::min(img_h - final_box.y, target_h);
+                final_box.y = final_box.y - pad_y;
+                if (final_box.y < 0) {
+                    final_box.y = 0;
+                }
+
+                int remaining_h = img_h - final_box.y;
+                if (target_h < remaining_h) {
+                    final_box.height = target_h;
+                } else {
+                    final_box.height = remaining_h;
+                }
             }
         }
     }

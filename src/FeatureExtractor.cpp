@@ -6,23 +6,26 @@ AUTHOR: CORTESE ALESSANDRO
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/video.hpp>
-#include <numeric>
 #include <cmath>
-#include <algorithm>
 #include <iostream>
 
-// Helper functions for statistical feature aggregation
 static float computeMean(const std::vector<float>& v) {
     if (v.empty()) return 0.0f;
     float s = 0.0f;
-    for (float x : v) s += x;
-    return s / v.size();
+    for (size_t i = 0; i < v.size(); ++i) {
+        s += v[i];
+    }
+    return s / (float)v.size();
 }
 
 static float computeMax(const std::vector<float>& v) {
     if (v.empty()) return 0.0f;
     float m = v[0];
-    for (float x : v) if (x > m) m = x;
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i] > m) {
+            m = v[i];
+        }
+    }
     return m;
 }
 
@@ -30,8 +33,11 @@ static float computeStdDev(const std::vector<float>& v) {
     if (v.size() < 2) return 0.0f;
     float m = computeMean(v);
     float sq = 0.0f;
-    for (float x : v) sq += (x - m) * (x - m);
-    return std::sqrt(sq / v.size());
+    for (size_t i = 0; i < v.size(); ++i) {
+        float diff = v[i] - m;
+        sq += diff * diff;
+    }
+    return std::sqrt(sq / (float)v.size());
 }
 
 static int computeZeroCrossings(const std::vector<float>& v) {
@@ -41,15 +47,38 @@ static int computeZeroCrossings(const std::vector<float>& v) {
     for (size_t i = 1; i < v.size(); ++i) {
         float p = v[i - 1] - m;
         float c = v[i] - m;
-        if ((p <= 0.0f && c > 0.0f) || (p >= 0.0f && c < 0.0f)) count++;
+        if ((p <= 0.0f && c > 0.0f) || (p >= 0.0f && c < 0.0f)) {
+            count++;
+        }
     }
     return count;
 }
 
 static float computePercentile(std::vector<float> v, float pct) {
     if (v.empty()) return 0.0f;
-    int idx = (int)(std::clamp(pct, 0.0f, 1.0f) * (v.size() - 1));
-    std::nth_element(v.begin(), v.begin() + idx, v.end());
+
+    float clamped_pct = pct;
+    if (clamped_pct < 0.0f) {
+        clamped_pct = 0.0f;
+    } else if (clamped_pct > 1.0f) {
+        clamped_pct = 1.0f;
+    }
+
+    int idx = (int)(clamped_pct * (float)(v.size() - 1));
+
+    int n = (int)v.size();
+    for (int i = 0; i <= idx; ++i) {
+        int min_idx = i;
+        for (int j = i + 1; j < n; ++j) {
+            if (v[j] < v[min_idx]) {
+                min_idx = j;
+            }
+        }
+        float temp = v[i];
+        v[i] = v[min_idx];
+        v[min_idx] = temp;
+    }
+
     return v[idx];
 }
 
@@ -70,12 +99,26 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
     int total_frames = (int)frames.size();
 
     cv::Rect ref_roi = roi;
-    if (ref_roi.width <= 10 || ref_roi.height <= 25 || ref_roi.width >= img_w * 0.85 || ref_roi.height >= img_h * 0.85) {
+    if (ref_roi.width <= 10 || ref_roi.height <= 25 || ref_roi.width >= (int)(img_w * 0.85f) || ref_roi.height >= (int)(img_h * 0.85f)) {
         ref_roi = cv::Rect(img_w / 4, img_h / 6, img_w / 2, (img_h * 2) / 3);
     }
-    ref_roi = ref_roi & cv::Rect(0, 0, img_w, img_h);
+    
+    int rx1 = (ref_roi.x > 0) ? ref_roi.x : 0;
+    int ry1 = (ref_roi.y > 0) ? ref_roi.y : 0;
+    int rx2 = (ref_roi.x + ref_roi.width < img_w) ? (ref_roi.x + ref_roi.width) : img_w;
+    int ry2 = (ref_roi.y + ref_roi.height < img_h) ? (ref_roi.y + ref_roi.height) : img_h;
+    int rw = rx2 - rx1;
+    int rh = ry2 - ry1;
+    if (rw < 0) rw = 0;
+    if (rh < 0) rh = 0;
+    ref_roi = cv::Rect(rx1, ry1, rw, rh);
 
-    float actor_height = (float)(ref_roi.height > 15 ? ref_roi.height : img_h * 0.5f);
+    float actor_height;
+    if (ref_roi.height > 15) {
+        actor_height = (float)ref_roi.height;
+    } else {
+        actor_height = img_h * 0.5f;
+    }
 
     // Sequence tracker to follow actor center across frames
     Tracker seq_tracker;
@@ -154,7 +197,16 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
         cv::magnitude(flow_channels[0], flow_channels[1], mag);
 
         if (actor_present[t]) {
-            cv::Rect box = tracked_boxes[t] & cv::Rect(0, 0, img_w, img_h);
+            int bx1 = (tracked_boxes[t].x > 0) ? tracked_boxes[t].x : 0;
+            int by1 = (tracked_boxes[t].y > 0) ? tracked_boxes[t].y : 0;
+            int bx2 = (tracked_boxes[t].x + tracked_boxes[t].width < img_w) ? (tracked_boxes[t].x + tracked_boxes[t].width) : img_w;
+            int by2 = (tracked_boxes[t].y + tracked_boxes[t].height < img_h) ? (tracked_boxes[t].y + tracked_boxes[t].height) : img_h;
+            int bw_box = bx2 - bx1;
+            int bh_box = by2 - by1;
+            if (bw_box < 0) bw_box = 0;
+            if (bh_box < 0) bh_box = 0;
+            cv::Rect box(bx1, by1, bw_box, bh_box);
+
             if (box.width > 5 && box.height > 5) {
                 cv::Mat box_mag = mag(box);
                 cv::Mat box_vx  = flow_channels[0](box);
@@ -178,8 +230,19 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
                     }
                 }
                 if (!vx_vals.empty()) {
-                    int p85_idx = (int)(0.85f * (vx_vals.size() - 1));
-                    std::nth_element(vx_vals.begin(), vx_vals.begin() + p85_idx, vx_vals.end());
+                    int p85_idx = (int)(0.85f * (float)(vx_vals.size() - 1));
+                    int n = (int)vx_vals.size();
+                    for (int i = 0; i <= p85_idx; ++i) {
+                        int min_idx = i;
+                        for (int j = i + 1; j < n; ++j) {
+                            if (vx_vals[j] < vx_vals[min_idx]) {
+                                min_idx = j;
+                            }
+                        }
+                        float temp = vx_vals[i];
+                        vx_vals[i] = vx_vals[min_idx];
+                        vx_vals[min_idx] = temp;
+                    }
                     body_flow_p80s.push_back(vx_vals[p85_idx] / actor_height);
                 }
 
@@ -211,8 +274,19 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
                     }
                 }
                 if (!bot_vx_vals.empty()) {
-                    int p85_idx = (int)(0.85f * (bot_vx_vals.size() - 1));
-                    std::nth_element(bot_vx_vals.begin(), bot_vx_vals.begin() + p85_idx, bot_vx_vals.end());
+                    int p85_idx = (int)(0.85f * (float)(bot_vx_vals.size() - 1));
+                    int n = (int)bot_vx_vals.size();
+                    for (int i = 0; i <= p85_idx; ++i) {
+                        int min_idx = i;
+                        for (int j = i + 1; j < n; ++j) {
+                            if (bot_vx_vals[j] < bot_vx_vals[min_idx]) {
+                                min_idx = j;
+                            }
+                        }
+                        float temp = bot_vx_vals[i];
+                        bot_vx_vals[i] = bot_vx_vals[min_idx];
+                        bot_vx_vals[min_idx] = temp;
+                    }
                     leg_flow_p80s.push_back(bot_vx_vals[p85_idx] / actor_height);
                 }
 
@@ -224,8 +298,19 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
                     }
                 }
                 if (!top_vx_vals.empty()) {
-                    int p90_idx = (int)(0.90f * (top_vx_vals.size() - 1));
-                    std::nth_element(top_vx_vals.begin(), top_vx_vals.begin() + p90_idx, top_vx_vals.end());
+                    int p90_idx = (int)(0.90f * (float)(top_vx_vals.size() - 1));
+                    int n = (int)top_vx_vals.size();
+                    for (int i = 0; i <= p90_idx; ++i) {
+                        int min_idx = i;
+                        for (int j = i + 1; j < n; ++j) {
+                            if (top_vx_vals[j] < top_vx_vals[min_idx]) {
+                                min_idx = j;
+                            }
+                        }
+                        float temp = top_vx_vals[i];
+                        top_vx_vals[i] = top_vx_vals[min_idx];
+                        top_vx_vals[min_idx] = temp;
+                    }
                     punch_peaks.push_back(top_vx_vals[p90_idx] / actor_height);
                 }
 
@@ -237,7 +322,8 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
                 upper_vy_means.push_back(mean_top_vy);
 
                 // Top 30% head/hand elevation rect
-                int head_h = std::max(1, (int)(bh * 0.3f));
+                int head_h = (int)(bh * 0.3f);
+                if (head_h < 1) head_h = 1;
                 cv::Rect head_rect(0, 0, bw, head_h);
                 cv::Mat head_mag = box_mag(head_rect);
                 float head_mag_sum = (float)cv::sum(head_mag)[0];
@@ -275,9 +361,11 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
     }
 
     // --- Compute aggregated feature vector ---
-    int first_active = -1, last_active = -1;
+    int first_active = -1;
+    int last_active = -1;
     std::vector<float> active_center_ys;
-    float min_cx = 99999.0f, max_cx = -99999.0f;
+    float min_cx = 99999.0f;
+    float max_cx = -99999.0f;
     float cumulative_dx = 0.0f;
     int active_count = 0;
 
@@ -328,9 +416,14 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
     float leg_energy_cv  = leg_energy_std / (leg_mean_energy + 1e-4f);
     int stride_crossings = computeZeroCrossings(leg_flow_mags);
 
-    float sum_top_energy = 0.0f, sum_bot_energy = 0.0f;
-    for (float x : upper_flow_mags) sum_top_energy += x;
-    for (float x : leg_flow_mags)   sum_bot_energy += x;
+    float sum_top_energy = 0.0f;
+    float sum_bot_energy = 0.0f;
+    for (size_t i = 0; i < upper_flow_mags.size(); ++i) {
+        sum_top_energy += upper_flow_mags[i];
+    }
+    for (size_t i = 0; i < leg_flow_mags.size(); ++i) {
+        sum_bot_energy += leg_flow_mags[i];
+    }
     float vertical_bias  = sum_top_energy / (sum_bot_energy + 1e-4f);
 
     float mean_upper_vy_mag  = computeMean(upper_vy_mags);
@@ -340,7 +433,10 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
 
     float conv_std = computeStdDev(convergence_history);
     float conv_max = computeMax(convergence_history);
-    float opposed_motion_ratio = upper_motion_frames > 0 ? ((float)opposed_motion_count / upper_motion_frames) : 0.0f;
+    float opposed_motion_ratio = 0.0f;
+    if (upper_motion_frames > 0) {
+        opposed_motion_ratio = (float)opposed_motion_count / (float)upper_motion_frames;
+    }
     float punch_peak_max = computeMax(punch_peaks);
     float avg_asymmetry = computeMean(asymmetry_history);
     float box_width_std = computeStdDev(box_widths);
@@ -348,33 +444,33 @@ FeatureSample FeatureExtractor::extractFromSequence(const std::vector<cv::Mat>& 
     float max_aspect_ratio = computeMax(aspect_ratios);
 
     // Build 27-element feature vector
-    sample.descriptors.push_back(total_displacement);                       // 1. Total net sequence horizontal displacement
-    sample.descriptors.push_back(x_span_norm);                              // 2. Maximum horizontal span of bounding box centroid (Static vs Dynamic)
-    sample.descriptors.push_back(cumulative_dx_norm);                       // 3. Cumulative frame-to-frame path distance (Static vs Dynamic)
-    sample.descriptors.push_back(max_trans_speed);                          // 4. Max translation speed
-    sample.descriptors.push_back(p75_trans_speed);                          // 5. 75th percentile instantaneous speed (Walking vs Jogging vs Running)
-    sample.descriptors.push_back(p90_trans_speed);                          // 6. 90th percentile instantaneous speed (Walking vs Jogging vs Running)
-    sample.descriptors.push_back(mean_trans_speed);                         // 7. Mean instantaneous speed
-    sample.descriptors.push_back(mean_body_p80);                            // 8. Mean body 85th percentile flow speed
-    sample.descriptors.push_back(max_body_p80);                             // 9. Max body 85th percentile flow speed
-    sample.descriptors.push_back(mean_leg_p80);                             // 10. Mean leg flow speed
-    sample.descriptors.push_back(max_leg_p80);                              // 11. Max leg flow speed
-    sample.descriptors.push_back(leg_energy_std);                           // 12. Leg motion energy std dev (stride rhythm)
-    sample.descriptors.push_back(leg_energy_cv);                            // 13. Leg motion energy coefficient of variation
-    sample.descriptors.push_back((float)stride_crossings);     // 14. Stride zero crossings (gait frequency)
-    sample.descriptors.push_back(centroid_vertical_bounce);                 // 15. Centroid vertical bounce (Running vs Walking)
-    sample.descriptors.push_back(vertical_bias);                            // 16. Upper vs lower body energy ratio
-    sample.descriptors.push_back(mean_upper_vy_mag);                        // 17. Upper body vertical motion magnitude
-    sample.descriptors.push_back(max_upper_vy_mag);                         // 18. Upper body max vertical motion magnitude
-    sample.descriptors.push_back(mean_head_energy_ratio);                   // 19. Top 30% head/hand elevation energy ratio (Waving)
-    sample.descriptors.push_back((float)vy_zero_crossings);    // 20. Upper body vertical oscillation count (Waving)
-    sample.descriptors.push_back(conv_std);                                 // 21. Convergence std dev (Clapping)
-    sample.descriptors.push_back(conv_max);                                 // 22. Peak convergence speed (Clapping)
-    sample.descriptors.push_back(opposed_motion_ratio);                    // 23. Opposed left-right motion ratio (Clapping)
-    sample.descriptors.push_back(punch_peak_max);                           // 24. Peak horizontal punch speed (Boxing)
-    sample.descriptors.push_back(avg_asymmetry);                            // 25. Upper body motion asymmetry (Boxing)
-    sample.descriptors.push_back(box_width_std);                            // 26. Bounding box width oscillation std dev (Clapping)
-    sample.descriptors.push_back(max_aspect_ratio);                         // 27. Bounding box max aspect ratio
+    sample.descriptors.push_back(total_displacement);                       // Total net sequence horizontal displacement
+    sample.descriptors.push_back(x_span_norm);                              // Maximum horizontal span of bounding box centroid (Static vs Dynamic)
+    sample.descriptors.push_back(cumulative_dx_norm);                       // Cumulative frame-to-frame path distance (Static vs Dynamic)
+    sample.descriptors.push_back(max_trans_speed);                          // Max translation speed
+    sample.descriptors.push_back(p75_trans_speed);                          // 75th percentile instantaneous speed (Walking vs Jogging vs Running)
+    sample.descriptors.push_back(p90_trans_speed);                          // 90th percentile instantaneous speed (Walking vs Jogging vs Running)
+    sample.descriptors.push_back(mean_trans_speed);                         // Mean instantaneous speed
+    sample.descriptors.push_back(mean_body_p80);                            // Mean body 85th percentile flow speed
+    sample.descriptors.push_back(max_body_p80);                             // Max body 85th percentile flow speed
+    sample.descriptors.push_back(mean_leg_p80);                             // Mean leg flow speed
+    sample.descriptors.push_back(max_leg_p80);                              // Max leg flow speed
+    sample.descriptors.push_back(leg_energy_std);                           // Leg motion std dev (stride rhythm)
+    sample.descriptors.push_back(leg_energy_cv);                            // Leg motion coefficient of variation
+    sample.descriptors.push_back((float)stride_crossings);                  // Stride zero crossings
+    sample.descriptors.push_back(centroid_vertical_bounce);                 // Centroid vertical bounce (Running vs Walking)
+    sample.descriptors.push_back(vertical_bias);                            // Upper vs lower body ratio
+    sample.descriptors.push_back(mean_upper_vy_mag);                        // Upper body vertical motion magnitude
+    sample.descriptors.push_back(max_upper_vy_mag);                         // Upper body max vertical motion magnitude
+    sample.descriptors.push_back(mean_head_energy_ratio);                   // Top 30% head/hand elevation ratio (Waving)
+    sample.descriptors.push_back((float)vy_zero_crossings);                 // Upper body vertical oscillation (Waving)
+    sample.descriptors.push_back(conv_std);                                 // Convergence std dev (Clapping)
+    sample.descriptors.push_back(conv_max);                                 // Peak convergence speed (Clapping)
+    sample.descriptors.push_back(opposed_motion_ratio);                     // Opposed left-right motion ratio (Clapping)
+    sample.descriptors.push_back(punch_peak_max);                           // Peak horizontal punch speed (Boxing)
+    sample.descriptors.push_back(avg_asymmetry);                            // Upper body motion asymmetry (Boxing)
+    sample.descriptors.push_back(box_width_std);                            // Bounding box width oscillation std dev (Clapping)
+    sample.descriptors.push_back(max_aspect_ratio);                         // Bounding box max aspect ratio
 
     return sample;
 }

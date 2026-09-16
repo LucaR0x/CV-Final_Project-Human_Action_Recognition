@@ -5,7 +5,7 @@
 #include <vector>
 #include <string>
 #include "DatasetLoader.hpp"
-#include "FeatureExtractor.hpp" // For FeatureSample definition
+#include "FeatureExtractor.hpp"
 
 class YoloFeatureExtractor {
 public:
@@ -18,4 +18,4 @@ public:
                                        const std::vector<cv::Rect>& yolo_boxes);
 };
 
-#endif // YOLO_FEATURE_EXTRACTOR_HPP
+#endif

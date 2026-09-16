@@ -15,13 +15,13 @@ struct SequenceData {
 
 class DatasetLoader {
 public:
-    // Load all KTH action sequences from dataset folder
+    // Load all action sequences from dataset folder
     static std::vector<SequenceData> loadDataset(const std::string& dataset_path);
 
 private:
-    // Parse ground truth text annotation file
+    // Parse ground truth file
     static bool parseGroundTruth(const std::string& txt_path, int img_w, int img_h,
                                  int& label, cv::Rect& bbox);
 };
 
-#endif // DATASET_LOADER_HPP
+#endif

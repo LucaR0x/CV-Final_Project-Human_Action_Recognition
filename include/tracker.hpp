@@ -3,10 +3,9 @@
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc.hpp>
-//#include <opencv2/geometry.hpp>
+#include <opencv2/geometry.hpp>
 #include <vector>
 
-// Member 1: Classical CV Tracker class for actor localization
 class Tracker {
 private:
     cv::Ptr<cv::BackgroundSubtractor> bg_subtractor;
@@ -24,4 +23,4 @@ public:
     cv::Rect processFrame(const cv::Mat& frame, cv::Mat& out_mask);
 };
 
-#endif // TRACKER_HPP
+#endif

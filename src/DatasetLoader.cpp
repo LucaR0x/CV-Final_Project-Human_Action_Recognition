@@ -7,6 +7,7 @@ AUTHOR: ROSSETTO LUCA
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <cctype>
 
 namespace fs = std::filesystem;
 
@@ -19,12 +20,34 @@ bool DatasetLoader::parseGroundTruth(const std::string& txt_path, int img_w, int
     }
 
     float xc, yc, w, h;
-    // Read format: <class_id> <x_center> <y_center> <width> <height>
     if (in_file >> label >> xc >> yc >> w >> h) {
-        float abs_xc = (xc <= 1.0f) ? (xc * img_w) : xc;
-        float abs_yc = (yc <= 1.0f) ? (yc * img_h) : yc;
-        float abs_w  = (w <= 1.0f)  ? (w * img_w)  : w;
-        float abs_h  = (h <= 1.0f)  ? (h * img_h)  : h;
+        float abs_xc;
+        if (xc <= 1.0f) {
+            abs_xc = xc * (float)img_w;
+        } else {
+            abs_xc = xc;
+        }
+
+        float abs_yc;
+        if (yc <= 1.0f) {
+            abs_yc = yc * (float)img_h;
+        } else {
+            abs_yc = yc;
+        }
+
+        float abs_w;
+        if (w <= 1.0f) {
+            abs_w = w * (float)img_w;
+        } else {
+            abs_w = w;
+        }
+
+        float abs_h;
+        if (h <= 1.0f) {
+            abs_h = h * (float)img_h;
+        } else {
+            abs_h = h;
+        }
 
         int x = (int)(abs_xc - abs_w / 2.0f);
         int y = (int)(abs_yc - abs_h / 2.0f);
@@ -48,11 +71,15 @@ std::vector<SequenceData> DatasetLoader::loadDataset(const std::string& dataset_
         return dataset;
     }
 
-    for (const auto& class_dir : fs::directory_iterator(dataset_path)) {
-        if (!class_dir.is_directory()) continue;
+    for (const fs::directory_entry& class_dir : fs::directory_iterator(dataset_path)) {
+        if (!class_dir.is_directory()) {
+            continue;
+        }
 
-        for (const auto& seq_dir : fs::directory_iterator(class_dir.path())) {
-            if (!seq_dir.is_directory()) continue;
+        for (const fs::directory_entry& seq_dir : fs::directory_iterator(class_dir.path())) {
+            if (!seq_dir.is_directory()) {
+                continue;
+            }
 
             SequenceData seq;
             seq.sequence_name = seq_dir.path().filename().string();
@@ -60,14 +87,23 @@ std::vector<SequenceData> DatasetLoader::loadDataset(const std::string& dataset_
             fs::path frames_path = seq_dir.path() / "data";
             fs::path labels_path = seq_dir.path() / "labels";
 
-            if (!fs::exists(frames_path)) frames_path = seq_dir.path();
-            if (!fs::exists(labels_path)) labels_path = seq_dir.path();
+            if (!fs::exists(frames_path)) {
+                frames_path = seq_dir.path();
+            }
+            if (!fs::exists(labels_path)) {
+                labels_path = seq_dir.path();
+            }
 
             std::vector<std::string> frame_files;
             if (fs::exists(frames_path) && fs::is_directory(frames_path)) {
-                for (const auto& f : fs::directory_iterator(frames_path)) {
+                for (const fs::directory_entry& f : fs::directory_iterator(frames_path)) {
                     std::string ext = f.path().extension().string();
-                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                    
+                    // Conversione in minuscolo con ciclo classico
+                    for (size_t i = 0; i < ext.length(); i++) {
+                        ext[i] = (char)std::tolower(ext[i]);
+                    }
+
                     if (ext == ".jpg" || ext == ".png" || ext == ".jpeg") {
                         frame_files.push_back(f.path().string());
                     }
@@ -76,7 +112,8 @@ std::vector<SequenceData> DatasetLoader::loadDataset(const std::string& dataset_
 
             std::sort(frame_files.begin(), frame_files.end());
 
-            for (const auto& f_path : frame_files) {
+            for (size_t i = 0; i < frame_files.size(); i++) {
+                std::string f_path = frame_files[i];
                 cv::Mat frame_img = cv::imread(f_path);
                 if (!frame_img.empty()) {
                     seq.frames.push_back(frame_img);
@@ -85,8 +122,8 @@ std::vector<SequenceData> DatasetLoader::loadDataset(const std::string& dataset_
 
             std::string gt_file = "";
             if (fs::exists(labels_path) && fs::is_directory(labels_path)) {
-                for (const auto& f : fs::directory_iterator(labels_path)) {
-                    if (f.path().extension() == ".txt") {
+                for (const fs::directory_entry& f : fs::directory_iterator(labels_path)) {
+                    if (f.path().extension().string() == ".txt") {
                         gt_file = f.path().string();
                         break;
                     }
