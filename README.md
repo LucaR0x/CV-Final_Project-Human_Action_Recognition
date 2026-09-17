@@ -25,7 +25,7 @@ computer-vision-final-project/
 │   └── yolov8n-pose.onnx       │   Pretrained YOLOv8-Pose ONNX model file
 ├── include/                   <-- C++ Header Files (.hpp)
 ├── src/                       <-- C++ Source Files (.cpp)
-└── output/                    <-- Auto-generated output directory
+└── output/                    <-- Auto generated output directory
     ├── cv/                    │   Classical CV output visualizations
     └── yolo/                  │   YOLO Deep Learning output visualizations
 ```
@@ -35,7 +35,7 @@ computer-vision-final-project/
 ## System Architecture & Classes Overview
 
 1. **`DatasetLoader`** ([include/DatasetLoader.hpp](include/DatasetLoader.hpp))
-   * Scans the `data/` directory, loads 40-frame image sequences, and parses ground-truth bounding box text annotations for the median frame (frame 20).
+   * Scans the `data/` directory, loads 40-frame image sequences, and parses ground truth bounding box text annotations for the median frame (frame 20).
 
 2. **`Tracker`** ([include/tracker.hpp](include/tracker.hpp)) — Classical Computer Vision Mode
    * Computes a sequence-wide median background image $\mathbf{B}(x,y)$, performs background subtraction, adaptive thresholding, and applies vertical morphological closing kernels to localize human actors.
@@ -44,7 +44,7 @@ computer-vision-final-project/
    * Loads `models/yolov8n-pose.onnx` via the OpenCV DNN module. Detects 17 human body keypoints, computes their convex hull, encloses extremities, and applies Exponential Moving Average (EMA) filtering to reduce jitter.
 
 4. **`FeatureExtractor`** & **`YoloFeatureExtractor`** ([include/FeatureExtractor.hpp](include/FeatureExtractor.hpp))
-   * Extract spatiotemporal motion features using dense Farnebäck optical flow, body sub region flow energies (torso vs legs), percentile translation speeds, and bounding box relative scale ratios, constructing a 27-element feature vector $\mathbf{x} \in \mathbb{R}^{27}$.
+   * Extract spatiotemporal motion features using dense Farnebäck optical flow, body sub region flow energies (torso vs legs), percentile translation speeds, and bounding box relative scale ratios, constructing a 27 element feature vector $\mathbf{x} \in \mathbb{R}^{27}$.
 
 5. **`Classifier`** ([include/Classifier.hpp](include/Classifier.hpp))
    * Implements a Radial Basis Function (RBF) kernel Support Vector Machine (SVM). Handles Zscore feature standardization, hyperparameter tuning grid search, and Stratified 6-Fold Cross Validation.
@@ -75,7 +75,7 @@ make
 
 ### Running the Executable
 
-Inside the `build/` directory, run `./main` using one of the supported command-line flags:
+Inside the `build/` directory, run `./main` using one of the supported command line flags:
 
 #### 1. Classical Computer Vision Pipeline
 Runs median background subtraction tracking:
@@ -90,7 +90,7 @@ Runs keypoint-based pose estimation tracking:
 ```
 
 #### 3. Complete Comparative Execution
-Runs **both pipelines sequentially** and prints a side-by-side performance comparison summary table:
+Runs **both pipelines sequentially** and prints a side by side performance comparison summary table:
 ```bash
 ./main --use-all
 ```
