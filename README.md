@@ -34,8 +34,6 @@ computer-vision-final-project/
 
 ## System Architecture & Classes Overview
 
-The codebase follows a modular Object Oriented C++ design:
-
 1. **`DatasetLoader`** ([include/DatasetLoader.hpp](include/DatasetLoader.hpp))
    * Scans the `data/` directory, loads 40-frame image sequences, and parses ground-truth bounding box text annotations for the median frame (frame 20).
 
